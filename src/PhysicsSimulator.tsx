@@ -11,6 +11,7 @@ interface CelestialBodyProperties {
     tangential: number;
   };
   isSun?: boolean;
+  isLocked?: boolean;
 }
 
 interface ExtendedBody extends Matter.Body {
@@ -18,6 +19,8 @@ interface ExtendedBody extends Matter.Body {
   circleRadius?: number;
   timeCreated?: number;
   name?: string;
+  isLocked?: boolean;
+  lockedVelocity?: { x: number; y: number };
 }
 
 const PhysicsSimulator: React.FC = () => {
@@ -29,6 +32,14 @@ const PhysicsSimulator: React.FC = () => {
   const [nextBodyId, setNextBodyId] = useState(1);
   const [grabMode, setGrabMode] = useState(true);
   const [nextPlanetNumber, setNextPlanetNumber] = useState(1);
+  const [isEditing, setIsEditing] = useState(false);
+  const [isHoldingPlanet, setIsHoldingPlanet] = useState(false);
+  const [editingValues, setEditingValues] = useState<{
+    name: string;
+    mass: number;
+    size: number;
+    isLocked: boolean;
+  } | null>(null);
   const mouseConstraintRef = useRef<Matter.MouseConstraint | null>(null);
   const grabModeRef = useRef(grabMode);
 
@@ -50,9 +61,12 @@ const PhysicsSimulator: React.FC = () => {
   const SUN_MASS = 10000;
   const SUN_RADIUS = 40;
   
-  const createPlanet = (distance: number = 150 + Math.random() * 150, size: number = 8 + Math.random() * 12): ExtendedBody => {
-    const planetNumber = nextPlanetNumber;
-    setNextPlanetNumber(prev => prev + 1);
+  const createPlanet = (distance: number = 150 + Math.random() * 150, size: number = 8 + Math.random() * 12, planetNumberOverride?: number): ExtendedBody => {
+    // Use override if provided (for initial planets), otherwise use state
+    const planetNumber = planetNumberOverride ?? nextPlanetNumber;
+    if (planetNumberOverride === undefined) {
+      setNextPlanetNumber(prev => prev + 1);
+    }
 
     const angle = Math.random() * Math.PI * 2;
     const x = 400 + Math.cos(angle) * distance;
@@ -61,8 +75,9 @@ const PhysicsSimulator: React.FC = () => {
     // v = sqrt(GM/r) where G is gravitational constant, M is sun's mass, r is distance
     const orbitSpeed = Math.sqrt((GRAVITY_CONSTANT * SUN_MASS) / distance);
 
-    const vx = -Math.sin(angle) * orbitSpeed * 1.5;  // Negative for counterclockwise orbit
-    const vy = Math.cos(angle) * orbitSpeed * 1.5;
+    // Positive for counterclockwise orbit (standard in math/physics)
+    const vx = Math.sin(angle) * orbitSpeed * 1.5;
+    const vy = -Math.cos(angle) * orbitSpeed * 1.5;
     
     const color = `#${Math.floor(Math.random()*16777215).toString(16)}`;
     
@@ -71,7 +86,7 @@ const PhysicsSimulator: React.FC = () => {
         fillStyle: color,
         strokeStyle: '#FFFFFF'
       },
-      mass: size * 2,
+      mass: size * 2, // Initial mass based on size, but will be independent after creation
       velocity: { x: vx, y: vy },
       frictionAir: 0,
       friction: 0,
@@ -136,12 +151,16 @@ const PhysicsSimulator: React.FC = () => {
     }) as ExtendedBody;
     sun.isSun = true;
 
+    // Use a local variable to assign unique numbers to the initial planets
+    let initialPlanetNumber = 1;
     const planets: ExtendedBody[] = [
-      createPlanet(100, 10),
-      createPlanet(150, 15),
-      createPlanet(200, 16),
-      createPlanet(250, 12),
+      createPlanet(100, 10, initialPlanetNumber++),
+      createPlanet(150, 15, initialPlanetNumber++),
+      createPlanet(200, 16, initialPlanetNumber++),
+      createPlanet(250, 12, initialPlanetNumber++),
     ];
+    // Set the next planet number for user-created planets
+    setNextPlanetNumber(initialPlanetNumber);
 
     setBodies([...planets]);
     setNextBodyId(nextBodyId + 4);
@@ -153,7 +172,8 @@ const PhysicsSimulator: React.FC = () => {
 
       // Update gravitational forces
       allBodies.forEach(body => {
-        if (body === sun || body.id === selectedBody?.id) return;
+        if (body === sun) return;
+        if ((body as ExtendedBody).isLocked) return; // Skip locked planets
 
         const dx = sun.position.x - body.position.x;
         const dy = sun.position.y - body.position.y;
@@ -175,24 +195,7 @@ const PhysicsSimulator: React.FC = () => {
         });
       });
 
-      if (selectedBody) {
-        const body = allBodies.find(b => b.id === selectedBody.id);
-        if (body) {
-          const orbitalVelocity = calculateOrbitalVelocity(body, sun);
-          setSelectedBody({
-            id: body.id,
-            name: (body as ExtendedBody).name || 'Unknown',
-            mass: body.mass,
-            size: (body as ExtendedBody).circleRadius! * 2,
-            orbitalVelocity,
-            isSun: (body as ExtendedBody).isSun
-          });
-        } else {
-          // If body not found, it was deleted
-          setSelectedBody(null);
-        }
-      }
-
+      // Update selectedBody when hovering over a planet in grab mode
       if (isMouseDown && mouseConstraintRef.current?.mouse.position) {
         const mousePosition = mouseConstraintRef.current.mouse.position;
         const bodiesAtPoint = Matter.Query.point(allBodies.filter(b => !b.isSensor), mousePosition);
@@ -210,6 +213,8 @@ const PhysicsSimulator: React.FC = () => {
           });
         }
       }
+
+
 
       if (!grabMode && mouseConstraintRef.current) {
         mouseConstraintRef.current.collisionFilter.mask = 0x00000000;
@@ -249,8 +254,15 @@ const PhysicsSimulator: React.FC = () => {
 
 
     let isMouseDown = false;
-    render.canvas.addEventListener('mousedown', () => { isMouseDown = true; });
-    render.canvas.addEventListener('mouseup', () => { isMouseDown = false; });
+    render.canvas.addEventListener('mousedown', () => { 
+      isMouseDown = true; 
+      // If in grab mode and a planet is selected, set isHoldingPlanet true
+      if (grabMode && selectedBody) setIsHoldingPlanet(true);
+    });
+    render.canvas.addEventListener('mouseup', () => { 
+      isMouseDown = false; 
+      setIsHoldingPlanet(false);
+    });
 
 
     Matter.Events.on(mouseConstraint, 'mousedown', (event) => {
@@ -311,6 +323,43 @@ const PhysicsSimulator: React.FC = () => {
     };
   }, []);
 
+  // Separate effect to update selected body properties in real-time
+  useEffect(() => {
+    if (!selectedBody || !engineRef.current) return;
+
+    const interval = setInterval(() => {
+      const allBodies = Matter.Composite.allBodies(engineRef.current!.world) as ExtendedBody[];
+      const sun = allBodies.find(body => body.isSun);
+      if (!sun) return;
+
+      const body = allBodies.find(b => b.id === selectedBody.id);
+      if (body) {
+        // Check if the body is currently being held by the mouse constraint
+        const isCurrentlyHeld = !!(mouseConstraintRef.current && 
+          mouseConstraintRef.current.body === body);
+        
+        setIsHoldingPlanet(isCurrentlyHeld);
+        
+        const orbitalVelocity = calculateOrbitalVelocity(body, sun);
+        setSelectedBody(prev => ({
+          id: body.id,
+          name: (body as ExtendedBody).name || 'Unknown',
+          mass: prev?.mass ?? body.mass, // Preserve manual mass changes
+          size: (body as ExtendedBody).circleRadius! * 2,
+          orbitalVelocity,
+          isSun: (body as ExtendedBody).isSun,
+          isLocked: (body as ExtendedBody).isLocked ?? false
+        }));
+      } else {
+        // If body not found, it was deleted
+        setSelectedBody(null);
+        setIsHoldingPlanet(false);
+      }
+    }, 50); // Update every 50ms for smooth real-time updates
+
+    return () => clearInterval(interval);
+  }, [selectedBody?.id]); // Only re-run when selected body ID changes
+
   return (
     <div className="w-full h-800 flex items-start justify-center bg-gray-900 p-4">
       <div className="flex-1 flex flex-col items-center">
@@ -343,32 +392,180 @@ const PhysicsSimulator: React.FC = () => {
           </div>
           {selectedBody && (
             <div className="space-y-4">
-              {[
-                { label: 'Name', value: selectedBody.name },
-                { label: 'Type', value: selectedBody.isSun ? 'Sun' : 'Planet' },
-                { label: 'Mass', value: selectedBody.mass.toFixed(2) },
-                { label: 'Size', value: `${selectedBody.size.toFixed(2)}px` },
-                { 
-                  label: 'Radial Velocity',
-                  value: selectedBody.orbitalVelocity.radial.toFixed(2),
-                  suffix: selectedBody.orbitalVelocity.radial > 0 ? '(out)' : '(in)'
-                },
-                {
-                  label: 'Orbital Velocity', 
-                  value: Math.abs(selectedBody.orbitalVelocity.tangential).toFixed(2),
-                  suffix: selectedBody.orbitalVelocity.tangential > 0 ? '(ccw)' : '(cw)'
-                }
-              ].map(({ label, value, suffix }) => (
-                <div key={label}>
-                  <label className="flex items-center justify-between">
-                    <span className="text-sm font-medium">{label}</span>
-                    <span className="text-sm text-gray-400">
-                      {value}
-                      {suffix && <span className="text-xs ml-1">{suffix}</span>}
-                    </span>
-                  </label>
-                </div>
-              ))}
+              {isEditing ? (
+                <>
+                  <div>
+                    <label className="flex items-center justify-between">
+                      <span className="text-sm font-medium">Name</span>
+                      <input
+                        className="text-sm text-gray-900 bg-gray-200 rounded px-2 py-1 ml-2"
+                        value={editingValues?.name ?? selectedBody.name}
+                        onChange={e => {
+                          if (editingValues) {
+                            setEditingValues({ ...editingValues, name: e.target.value });
+                            setSelectedBody({ ...selectedBody, name: e.target.value });
+                            // Update Matter body
+                            if (engineRef.current) {
+                              const allBodies = Matter.Composite.allBodies(engineRef.current.world) as ExtendedBody[];
+                              const body = allBodies.find(b => b.id === selectedBody.id);
+                              if (body) body.name = e.target.value;
+                            }
+                          }
+                        }}
+                      />
+                    </label>
+                  </div>
+                  {selectedBody.isSun && (
+                    <div>
+                      <label className="flex items-center justify-between">
+                        <span className="text-sm font-medium">Mass</span>
+                        <input
+                          type="number"
+                          className="text-sm text-gray-900 bg-gray-200 rounded px-2 py-1 ml-2 w-20"
+                                                  value={editingValues?.mass ?? selectedBody.mass}
+                        min={0.1}
+                        step={0.1}
+                        onChange={e => {
+                          if (editingValues) {
+                            const mass = parseFloat(e.target.value);
+                            setEditingValues({ ...editingValues, mass });
+                            setSelectedBody({ ...selectedBody, mass });
+                            if (engineRef.current) {
+                              const allBodies = Matter.Composite.allBodies(engineRef.current.world) as ExtendedBody[];
+                              const body = allBodies.find(b => b.id === selectedBody.id);
+                              if (body) {
+                                Matter.Body.setMass(body, mass);
+                                body.inverseMass = 1 / mass;
+                              }
+                            }
+                          }
+                        }}
+                        />
+                      </label>
+                                        </div>
+                  )}
+                  {!selectedBody.isSun && (
+                    <div>
+                      <label className="flex items-center justify-between">
+                        <span className="text-sm font-medium">Locked</span>
+                        <input
+                          type="checkbox"
+                          className="ml-2"
+                          checked={editingValues?.isLocked ?? selectedBody.isLocked ?? false}
+                          onChange={e => {
+                            if (editingValues) {
+                              const isLocked = e.target.checked;
+                              setEditingValues({ ...editingValues, isLocked });
+                              setSelectedBody({ ...selectedBody, isLocked });
+                              if (engineRef.current) {
+                                const allBodies = Matter.Composite.allBodies(engineRef.current.world) as ExtendedBody[];
+                                const body = allBodies.find(b => b.id === selectedBody.id);
+                                if (body) {
+                                  if (isLocked) {
+                                    // Store current velocity before locking
+                                    body.lockedVelocity = { x: body.velocity.x, y: body.velocity.y };
+                                    body.isLocked = true;
+                                    Matter.Body.setVelocity(body, { x: 0, y: 0 });
+                                  } else {
+                                    // Restore velocity when unlocking
+                                    body.isLocked = false;
+                                    if (body.lockedVelocity) {
+                                      Matter.Body.setVelocity(body, body.lockedVelocity);
+                                      body.lockedVelocity = undefined;
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }}
+                        />
+                      </label>
+                    </div>
+                  )}
+                  <div>
+                    <label className="flex items-center justify-between">
+                      <span className="text-sm font-medium">Size</span>
+                      <input
+                        type="number"
+                        className="text-sm text-gray-900 bg-gray-200 rounded px-2 py-1 ml-2 w-20"
+                        value={editingValues?.size ?? selectedBody.size}
+                        min={1}
+                        step={1}
+                        onChange={e => {
+                          if (editingValues) {
+                            const size = parseFloat(e.target.value);
+                            setEditingValues({ ...editingValues, size });
+                            setSelectedBody({ ...selectedBody, size });
+                            if (engineRef.current) {
+                              const allBodies = Matter.Composite.allBodies(engineRef.current.world) as ExtendedBody[];
+                              const body = allBodies.find(b => b.id === selectedBody.id);
+                              if (body) {
+                                // Store the current mass before scaling
+                                const currentMass = body.mass;
+                                const currentInverseMass = body.inverseMass;
+                                
+                                // Use Matter.Body.scale to change the hitbox
+                                const oldRadius = body.circleRadius || (body as any).radius || 1;
+                                const newRadius = size / 2;
+                                const scale = newRadius / oldRadius;
+                                Matter.Body.scale(body, scale, scale);
+                                body.circleRadius = newRadius;
+                                
+                                // Restore the mass to keep it independent of size
+                                Matter.Body.setMass(body, currentMass);
+                                body.inverseMass = currentInverseMass;
+                              }
+                            }
+                          }
+                        }}
+                      />
+                    </label>
+                  </div>
+                  <button className="mt-2 px-3 py-1 bg-blue-500 text-white rounded" onClick={() => {
+                    setIsEditing(false);
+                    setEditingValues(null);
+                  }}>Done</button>
+                </>
+              ) : (
+                [
+                  { label: 'Name', value: selectedBody.name },
+                  { label: 'Type', value: selectedBody.isSun ? 'Sun' : 'Planet' },
+                  ...(selectedBody.isSun ? [{ label: 'Mass', value: selectedBody.mass.toFixed(2) }] : []),
+                  { label: 'Size', value: `${selectedBody.size.toFixed(2)}px` },
+                  ...(selectedBody.isLocked ? [{ label: 'Status', value: 'Locked', suffix: '(frozen)' }] : []),
+                  { 
+                    label: 'Radial Velocity',
+                    value: selectedBody.isSun ? '0.00' : (isHoldingPlanet || selectedBody.isLocked ? '0.00' : selectedBody.orbitalVelocity.radial.toFixed(2)),
+                    suffix: selectedBody.isSun ? '(NaN)' : (isHoldingPlanet ? '(held)' : selectedBody.isLocked ? '(locked)' : (selectedBody.orbitalVelocity.radial > 0 ? '(out)' : '(in)'))
+                  },
+                  {
+                    label: 'Tangential Velocity', 
+                    value: selectedBody.isSun ? '0.00' : (isHoldingPlanet || selectedBody.isLocked ? '0.00' : Math.abs(selectedBody.orbitalVelocity.tangential).toFixed(2)),
+                    suffix: selectedBody.isSun ? '(NaN)' : (isHoldingPlanet ? '(held)' : selectedBody.isLocked ? '(locked)' : (selectedBody.orbitalVelocity.tangential > 0 ? '(ccw)' : '(cw)'))
+                  }
+                ].map(({ label, value, suffix }) => (
+                  <div key={label}>
+                    <label className="flex items-center justify-between">
+                      <span className="text-sm font-medium">{label}</span>
+                      <span className="text-sm text-gray-400">
+                        {value}
+                        {suffix && <span className="text-xs ml-1">{suffix}</span>}
+                      </span>
+                    </label>
+                  </div>
+                ))
+              )}
+              {!isEditing && (
+                <button className="mt-2 px-3 py-1 bg-blue-500 text-white rounded" onClick={() => {
+                  setEditingValues({
+                    name: selectedBody.name,
+                    mass: selectedBody.mass,
+                    size: selectedBody.size,
+                    isLocked: selectedBody.isLocked ?? false
+                  });
+                  setIsEditing(true);
+                }}>Edit</button>
+              )}
             </div>
           )}
         </div>
