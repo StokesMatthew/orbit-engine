@@ -1,0 +1,15 @@
+{
+  "files": {
+    "main.css": "/orbit-engine/static/css/main.7a00c616.css",
+    "main.js": "/orbit-engine/static/js/main.bfc49fe4.js",
+    "static/js/453.0a27b04a.chunk.js": "/orbit-engine/static/js/453.0a27b04a.chunk.js",
+    "index.html": "/orbit-engine/index.html",
+    "main.7a00c616.css.map": "/orbit-engine/static/css/main.7a00c616.css.map",
+    "main.bfc49fe4.js.map": "/orbit-engine/static/js/main.bfc49fe4.js.map",
+    "453.0a27b04a.chunk.js.map": "/orbit-engine/static/js/453.0a27b04a.chunk.js.map"
+  },
+  "entrypoints": [
+    "static/css/main.7a00c616.css",
+    "static/js/main.bfc49fe4.js"
+  ]
+}
