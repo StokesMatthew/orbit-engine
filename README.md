@@ -2,7 +2,6 @@
 
 A real-time orbital mechanics simulator built with React and Matter.js that allows you to explore gravitational physics through an interactive celestial body system.
 
-![Orbit Engine Demo](https://img.shields.io/badge/Status-Active-brightgreen)
 ![React](https://img.shields.io/badge/React-19.0.0-blue)
 ![TypeScript](https://img.shields.io/badge/TypeScript-4.9.5-blue)
 ![Matter.js](https://img.shields.io/badge/Matter.js-0.20.0-orange)
